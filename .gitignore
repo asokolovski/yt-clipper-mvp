@@ -1,0 +1,44 @@
+AGENTS.md
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Dependencies and virtual environments
+node_modules/
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# JavaScript and application build output
+.next/
+dist/
+build/
+coverage/
+
+# Generated media and downloads
+downloads/
+clips/
+output/
+*.mp4
+*.webm
+*.mkv
+*.part
+
+# Logs
+*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

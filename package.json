@@ -1,0 +1,41 @@
+{
+  "name": "yt-clipper-mvp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "db:check": "tsx --env-file=.env src/db/check-connection.ts",
+    "db:migrate": "node-pg-migrate --envPath .env up",
+    "db:rollback": "node-pg-migrate --envPath .env down",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asokolovski/yt-clipper-mvp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/asokolovski/yt-clipper-mvp/issues"
+  },
+  "homepage": "https://github.com/asokolovski/yt-clipper-mvp#readme",
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
+    "dotenv": "^17.4.2",
+    "node-pg-migrate": "^8.0.4",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "pg": "^8.22.0"
+  }
+}
