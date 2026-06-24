@@ -5,8 +5,10 @@
   "description": "",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file=.env src/index.ts",
     "db:check": "tsx --env-file=.env src/db/check-connection.ts",
+    "temporal:check": "tsx --env-file=.env src/temporal/check-connection.ts",
+    "worker:dev": "tsx --env-file=.env src/temporal/worker.ts",
     "db:migrate": "node-pg-migrate --envPath .env up",
     "db:rollback": "node-pg-migrate --envPath .env down",
     "typecheck": "tsc --noEmit",
@@ -35,7 +37,11 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@temporalio/client": "^1.18.1",
+    "@temporalio/worker": "^1.18.1",
+    "@temporalio/workflow": "^1.18.1",
     "express": "^5.2.1",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "youtube-caption-extractor": "^1.10.2"
   }
 }
