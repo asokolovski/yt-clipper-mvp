@@ -1,10 +1,18 @@
 import { getSubtitles } from "youtube-caption-extractor";
 
 import { dbPool } from "../db/pool.js";
+import {
+  createClipSelector,
+  type SelectedClip,
+} from "../llm/clip-selector.js";
 
 export type StoredTranscript = {
   source: "youtube_captions";
   segmentCount: number;
+};
+
+export type ClipSelectionResult = {
+  clips: SelectedClip[];
 };
 
 export async function markJobProcessing(jobId: string): Promise<void> {
@@ -35,11 +43,11 @@ export async function fetchAndStoreTranscript(
     )
     .join("\n");
 
-    console.log("Transcript fetched:", {
-      jobId,
-      segmentCount: subtitles.length,
-      preview: transcriptText.slice(0, 500),
-    });
+  console.log("Transcript fetched:", {
+    jobId,
+    segmentCount: subtitles.length,
+    preview: transcriptText.slice(0, 500),
+  });
 
   const result = await dbPool.query(
     `
@@ -61,6 +69,87 @@ export async function fetchAndStoreTranscript(
     source: "youtube_captions",
     segmentCount: subtitles.length,
   };
+}
+
+export async function selectClipTimestamps(
+  jobId: string,
+): Promise<ClipSelectionResult> {
+  const result = await dbPool.query(
+    `
+      SELECT transcript_text
+      FROM jobs
+      WHERE id = $1
+    `,
+    [jobId],
+  );
+
+  if (result.rowCount !== 1) {
+    throw new Error(
+      `Could not select clips because job ${jobId} was not found.`,
+    );
+  }
+
+  const transcriptText = result.rows[0].transcript_text;
+
+  if (typeof transcriptText !== "string" || transcriptText.trim() === "") {
+    throw new Error(
+      `Could not select clips because job ${jobId} has no transcript.`,
+    );
+  }
+
+  const transcriptEndTimeSeconds = getTranscriptEndTimeSeconds(transcriptText);
+  const clipSelector = createClipSelector();
+  const suggestions = await clipSelector.selectClips({
+    transcript: transcriptText,
+    transcriptEndTimeSeconds,
+  });
+
+  return {
+    clips: suggestions.map((suggestion) =>
+      validateClipSuggestion(suggestion, transcriptEndTimeSeconds),
+    ),
+  };
+}
+
+export async function storeClipSelections(
+  jobId: string,
+  clips: SelectedClip[],
+): Promise<void> {
+  const client = await dbPool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM clips WHERE job_id = $1", [jobId]);
+
+    for (const clip of clips) {
+      await client.query(
+        `
+          INSERT INTO clips (
+            job_id,
+            title,
+            start_time_seconds,
+            end_time_seconds,
+            reason
+          )
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          jobId,
+          clip.title,
+          clip.startTimeSeconds,
+          clip.endTimeSeconds,
+          clip.reason,
+        ],
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (error: unknown) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function markJobFailed(
@@ -94,6 +183,88 @@ function getYouTubeVideoId(youtubeUrl: string): string {
   }
 
   throw new Error(`Could not find a YouTube video ID in URL: ${youtubeUrl}`);
+}
+
+function getTranscriptEndTimeSeconds(transcriptText: string): number {
+  // lastIndexOf searches backward and finds the final caption's start marker.
+  const lastCaptionIndex = transcriptText.lastIndexOf("[start=");
+
+  if (lastCaptionIndex === -1) {
+    throw new Error(
+      "Could not find a caption timestamp in the transcript.",
+    );
+  }
+
+  const startTimeSeconds = readSecondsAfterLabel(
+    transcriptText,
+    "[start=",
+    lastCaptionIndex,
+  );
+  const durationSeconds = readSecondsAfterLabel(
+    transcriptText,
+    "duration=",
+    lastCaptionIndex,
+  );
+
+  return startTimeSeconds + durationSeconds;
+}
+
+function readSecondsAfterLabel(
+  text: string,
+  label: string,
+  searchFromIndex: number,
+): number {
+  const labelIndex = text.indexOf(label, searchFromIndex);
+
+  if (labelIndex === -1) {
+    throw new Error(`Could not find ${label} in the final caption.`);
+  }
+
+  const numberStartIndex = labelIndex + label.length;
+  const secondsLetterIndex = text.indexOf("s", numberStartIndex);
+
+  if (secondsLetterIndex === -1) {
+    throw new Error(`Could not read the number after ${label}.`);
+  }
+
+  const numberText = text.slice(numberStartIndex, secondsLetterIndex);
+  const seconds = Number(numberText);
+
+  if (!Number.isFinite(seconds)) {
+    throw new Error(`The value after ${label} is not a valid number.`);
+  }
+
+  return seconds;
+}
+
+function validateClipSuggestion(
+  clip: SelectedClip,
+  transcriptEndTimeSeconds: number,
+): SelectedClip {
+  const title = clip.title.trim();
+  const reason = clip.reason.trim();
+  const durationSeconds = clip.endTimeSeconds - clip.startTimeSeconds;
+
+  if (title === "" || reason === "") {
+    throw new Error("The LLM returned a clip with an empty title or reason.");
+  }
+
+  if (
+    clip.startTimeSeconds < 0 ||
+    clip.endTimeSeconds > transcriptEndTimeSeconds
+  ) {
+    throw new Error("The LLM returned a clip outside the transcript timestamps.");
+  }
+
+  if (durationSeconds < 20 || durationSeconds > 60) {
+    throw new Error("The LLM returned a clip that is not 20 to 60 seconds long.");
+  }
+
+  return {
+    ...clip,
+    title,
+    reason,
+  };
 }
 
 async function updateJob(

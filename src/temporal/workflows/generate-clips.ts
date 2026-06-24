@@ -2,7 +2,12 @@ import { log, proxyActivities } from "@temporalio/workflow";
 
 import type * as activities from "../activities.js";
 
-const { fetchAndStoreTranscript, markJobFailed, markJobProcessing } =
+const {
+  fetchAndStoreTranscript,
+  markJobFailed,
+  markJobProcessing,
+  storeClipSelections,
+} =
   proxyActivities<typeof activities>({
     startToCloseTimeout: "1 minute",
     retry: {
@@ -11,6 +16,15 @@ const { fetchAndStoreTranscript, markJobFailed, markJobProcessing } =
       maximumAttempts: 3,
     },
   });
+
+const { selectClipTimestamps } = proxyActivities<typeof activities>({
+  startToCloseTimeout: "3 minutes",
+  retry: {
+    initialInterval: "2 seconds",
+    backoffCoefficient: 2,
+    maximumAttempts: 3,
+  },
+});
 
 export type GenerateClipsInput = {
   jobId: string;
@@ -38,6 +52,14 @@ export async function generateClipsWorkflow(
       transcriptSource: transcript.source,
       transcriptSegmentCount: transcript.segmentCount,
     });
+
+    const clipSelection = await selectClipTimestamps(input.jobId);
+    await storeClipSelections(input.jobId, clipSelection.clips);
+
+    log.info("Clip timestamps selected and stored", {
+      jobId: input.jobId,
+      clipCount: clipSelection.clips.length,
+    });
   } catch (error: unknown) {
     const errorMessage = getErrorMessage(error);
 
@@ -52,5 +74,5 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Unknown transcript-processing error.";
+  return "Unknown clip-generation error.";
 }

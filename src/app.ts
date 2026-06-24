@@ -153,3 +153,57 @@ app.get("/api/jobs/:jobId/transcript", async (request, response) => {
       .json({ error: "Failed to get job transcript" });
   }
 });
+
+app.get("/api/jobs/:jobId/clips", async (request, response) => {
+  const { jobId } = request.params;
+
+  try {
+    const jobResult = await dbPool.query(
+      `
+        SELECT id, status
+        FROM jobs
+        WHERE id::text = $1
+      `,
+    [jobId],
+  );
+
+    if (jobResult.rowCount === 0) {
+      return response.status(404).json({ error: "Job not found" });
+    }
+
+    const clipsResult = await dbPool.query(
+      `
+        SELECT
+          id,
+          title,
+          start_time_seconds,
+          end_time_seconds,
+          reason,
+          status
+        FROM clips
+        WHERE job_id = $1
+        ORDER BY start_time_seconds
+      `,
+    [jobId],
+  );
+
+    const job = jobResult.rows[0];
+
+    return response.json({
+      jobId: job.id,
+      status: job.status,
+      clips: clipsResult.rows.map((clip) => ({
+        id: clip.id,
+        title: clip.title,
+        startTimeSeconds: clip.start_time_seconds,
+        endTimeSeconds: clip.end_time_seconds,
+        reason: clip.reason,
+        status: clip.status,
+      })),
+  });
+  } catch (error: unknown) {
+    console.error("Failed to get job clips:", error);
+
+    return response.status(500).json({ error: "Failed to get job clips" });
+  }
+});
