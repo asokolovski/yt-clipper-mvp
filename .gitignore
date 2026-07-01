@@ -42,3 +42,6 @@ output/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local media storage for clips and source videos
+/storage/

@@ -1,3 +1,6 @@
+import { access } from "node:fs/promises";
+import path from "node:path";
+
 import express from "express";
 
 import { dbPool } from "./db/pool.js";
@@ -11,6 +14,41 @@ app.use(express.json());
 
 app.get("/health", (_request, response) => {
   response.json({ status: "ok" });
+});
+
+app.get("/api/jobs", async (_request, response) => {
+  try {
+    const result = await dbPool.query(
+      `
+        SELECT
+          id,
+          workflow_id,
+          youtube_url,
+          status,
+          error_message,
+          created_at,
+          updated_at
+        FROM jobs
+        ORDER BY created_at DESC
+      `,
+    );
+
+    return response.json({
+      jobs: result.rows.map((job) => ({
+        id: job.id,
+        workflowId: job.workflow_id,
+        youtubeUrl: job.youtube_url,
+        status: job.status,
+        errorMessage: job.error_message,
+        createdAt: job.created_at,
+        updatedAt: job.updated_at,
+      })),
+    });
+  } catch (error: unknown) {
+    console.error("Failed to list jobs:", error);
+
+    return response.status(500).json({ error: "Failed to list jobs" });
+  }
 });
 
 app.post("/api/jobs", async (request, response) => {
@@ -164,8 +202,8 @@ app.get("/api/jobs/:jobId/clips", async (request, response) => {
         FROM jobs
         WHERE id::text = $1
       `,
-    [jobId],
-  );
+      [jobId],
+    );
 
     if (jobResult.rowCount === 0) {
       return response.status(404).json({ error: "Job not found" });
@@ -179,13 +217,14 @@ app.get("/api/jobs/:jobId/clips", async (request, response) => {
           start_time_seconds,
           end_time_seconds,
           reason,
-          status
+          status,
+          file_path
         FROM clips
         WHERE job_id = $1
         ORDER BY start_time_seconds
       `,
-    [jobId],
-  );
+      [jobId],
+    );
 
     const job = jobResult.rows[0];
 
@@ -199,11 +238,114 @@ app.get("/api/jobs/:jobId/clips", async (request, response) => {
         endTimeSeconds: clip.end_time_seconds,
         reason: clip.reason,
         status: clip.status,
+        filePath: clip.file_path,
       })),
-  });
+    });
   } catch (error: unknown) {
     console.error("Failed to get job clips:", error);
 
     return response.status(500).json({ error: "Failed to get job clips" });
   }
 });
+
+app.get("/api/clips/:clipId/stream", async (request, response) => {
+  const clip = await getCompletedClipById(request.params.clipId, response);
+
+  if (clip === null) {
+    return;
+  }
+
+  return response.sendFile(clip.absoluteFilePath);
+});
+
+app.get("/api/clips/:clipId/download", async (request, response) => {
+  const clip = await getCompletedClipById(request.params.clipId, response);
+
+  if (clip === null) {
+    return;
+  }
+
+  return response.download(
+    clip.absoluteFilePath,
+    `${createDownloadFileName(clip.title)}.mp4`,
+  );
+});
+
+function createDownloadFileName(title: unknown): string {
+  if (typeof title !== "string") {
+    return "clip";
+  }
+
+  const cleanedTitle = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (cleanedTitle === "") {
+    return "clip";
+  }
+
+  return cleanedTitle;
+}
+
+async function getCompletedClipById(
+  clipId: string,
+  response: express.Response,
+): Promise<{ absoluteFilePath: string; title: string } | null> {
+  try {
+    const result = await dbPool.query(
+      `
+        SELECT
+          id,
+          title,
+          status,
+          file_path
+        FROM clips
+        WHERE id::text = $1
+      `,
+      [clipId],
+    );
+
+    if (result.rowCount === 0) {
+      response.status(404).json({ error: "Clip not found" });
+      return null;
+    }
+
+    const clip = result.rows[0];
+
+    if (clip.status !== "completed") {
+      response.status(409).json({
+        error: "Clip is not ready yet",
+      });
+      return null;
+    }
+
+    if (typeof clip.file_path !== "string" || clip.file_path.trim() === "") {
+      response.status(404).json({
+        error: "Clip file path was not found",
+      });
+      return null;
+    }
+
+    const absoluteFilePath = path.resolve(clip.file_path);
+
+    try {
+      await access(absoluteFilePath);
+    } catch {
+      response.status(404).json({
+        error: "Clip file was not found on disk",
+      });
+      return null;
+    }
+
+    return {
+      absoluteFilePath,
+      title: clip.title,
+    };
+  } catch (error: unknown) {
+    console.error("Failed to load clip file:", error);
+    response.status(500).json({ error: "Failed to load clip file" });
+    return null;
+  }
+}

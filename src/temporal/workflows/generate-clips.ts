@@ -6,6 +6,7 @@ const {
   fetchAndStoreTranscript,
   markJobFailed,
   markJobProcessing,
+  markJobCompleted,
   storeClipSelections,
 } =
   proxyActivities<typeof activities>({
@@ -23,6 +24,18 @@ const { selectClipTimestamps } = proxyActivities<typeof activities>({
     initialInterval: "2 seconds",
     backoffCoefficient: 2,
     maximumAttempts: 3,
+  },
+});
+
+const {
+  downloadVideoActivity,
+  renderClipsActivity,
+} = proxyActivities<typeof activities>({
+  startToCloseTimeout: "15 minutes",
+  retry: {
+    initialInterval: "5 seconds",
+    backoffCoefficient: 2,
+    maximumAttempts: 2,
   },
 });
 
@@ -54,12 +67,17 @@ export async function generateClipsWorkflow(
     });
 
     const clipSelection = await selectClipTimestamps(input.jobId);
-    await storeClipSelections(input.jobId, clipSelection.clips);
+    const storedClips = await storeClipSelections(input.jobId, clipSelection.clips);
 
     log.info("Clip timestamps selected and stored", {
       jobId: input.jobId,
       clipCount: clipSelection.clips.length,
     });
+
+    const downloadedVideo = await downloadVideoActivity(input.jobId, input.youtubeUrl);
+
+    await renderClipsActivity(input.jobId, downloadedVideo.sourceVideoPath, storedClips);
+    await markJobCompleted(input.jobId);
   } catch (error: unknown) {
     const errorMessage = getErrorMessage(error);
 

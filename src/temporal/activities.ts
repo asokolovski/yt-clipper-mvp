@@ -6,6 +6,9 @@ import {
   type SelectedClip,
 } from "../llm/clip-selector.js";
 
+import { downloadVideo } from "../video/download-video.js";
+import { renderClip } from "../rendering/ffmpeg.js";
+
 export type StoredTranscript = {
   source: "youtube_captions";
   segmentCount: number;
@@ -15,12 +18,10 @@ export type ClipSelectionResult = {
   clips: SelectedClip[];
 };
 
-export async function markJobProcessing(jobId: string): Promise<void> {
-  await updateJob(jobId, {
-    status: "processing",
-    errorMessage: null,
-  });
-}
+export type StoredClip = SelectedClip & {
+  id: string;
+};
+
 
 export async function fetchAndStoreTranscript(
   jobId: string,
@@ -114,15 +115,17 @@ export async function selectClipTimestamps(
 export async function storeClipSelections(
   jobId: string,
   clips: SelectedClip[],
-): Promise<void> {
+): Promise<StoredClip[]> {
   const client = await dbPool.connect();
 
   try {
     await client.query("BEGIN");
     await client.query("DELETE FROM clips WHERE job_id = $1", [jobId]);
 
+    const storedClips: StoredClip[] = [];
+
     for (const clip of clips) {
-      await client.query(
+      const results = await client.query(
         `
           INSERT INTO clips (
             job_id,
@@ -132,6 +135,7 @@ export async function storeClipSelections(
             reason
           )
           VALUES ($1, $2, $3, $4, $5)
+          RETURNING id
         `,
         [
           jobId,
@@ -141,14 +145,85 @@ export async function storeClipSelections(
           clip.reason,
         ],
       );
+
+      storedClips.push({
+        ...clip,
+        id: results.rows[0].id,
+      });
     }
 
     await client.query("COMMIT");
+    return storedClips;
   } catch (error: unknown) {
     await client.query("ROLLBACK");
     throw error;
   } finally {
     client.release();
+  }
+}
+
+export async function downloadVideoActivity(
+  jobId: string,
+  youtubeUrl: string,
+): Promise<{ sourceVideoPath: string }> {
+  return await downloadVideo({
+    jobId,
+    youtubeUrl,
+  });
+}
+
+export async function renderClipsActivity(
+  jobId: string,
+  sourceVideoPath: string,
+  clips: StoredClip[],
+): Promise<void> {
+  for (const clip of clips) {
+
+    await dbPool.query(
+      `
+        UPDATE clips
+        SET 
+          status = 'rendering', 
+          updated_at = NOW()
+        WHERE id = $1
+      `,
+      [clip.id],
+    );
+
+    try {
+      const renderedClip = await renderClip({
+        jobId,
+        clipId: clip.id,
+        sourceVideoPath,
+        startTimeSeconds: clip.startTimeSeconds,
+        endTimeSeconds: clip.endTimeSeconds,
+      });
+
+      await dbPool.query(
+        `
+          UPDATE clips
+          SET
+            file_path = $1,
+            status = 'completed',
+            updated_at = NOW()
+          WHERE id = $2
+        `,
+        [renderedClip.filePath, renderedClip.clipId],
+      );
+    } catch (error: unknown) {
+      await dbPool.query(
+        `
+          UPDATE clips
+          SET
+            status = 'failed',
+            updated_at = NOW()
+          WHERE id = $1
+        `,
+        [clip.id],
+      );
+
+      throw error;
+    } 
   }
 }
 
@@ -159,6 +234,20 @@ export async function markJobFailed(
   await updateJob(jobId, {
     status: "failed",
     errorMessage,
+  });
+}
+
+export async function markJobCompleted(jobId: string) : Promise<void> {
+  await updateJob(jobId, {
+    status: "completed", 
+    errorMessage: null
+  });
+}
+
+export async function markJobProcessing(jobId: string): Promise<void> {
+  await updateJob(jobId, {
+    status: "processing",
+    errorMessage: null,
   });
 }
 
@@ -270,7 +359,7 @@ function validateClipSuggestion(
 async function updateJob(
   jobId: string,
   update: {
-    status: "processing" | "failed";
+    status: "processing" | "failed" | "completed";
     errorMessage: string | null;
   },
 ): Promise<void> {
