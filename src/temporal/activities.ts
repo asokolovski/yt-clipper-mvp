@@ -1,12 +1,14 @@
 import { getSubtitles } from "youtube-caption-extractor";
 
+import type {
+  ClipSelectionMode,
+  SelectedClip,
+} from "../clip-selection/types.js";
+import { createClipSelector } from "../clip-selection/create-clip-selector.js";
 import { dbPool } from "../db/pool.js";
-import {
-  createClipSelector,
-  type SelectedClip,
-} from "../llm/clip-selector.js";
 
 import { downloadVideo } from "../video/download-video.js";
+import { getVideoDuration } from "../video/get-video-duration.js";
 import { renderClip } from "../rendering/ffmpeg.js";
 
 export type StoredTranscript = {
@@ -77,7 +79,7 @@ export async function selectClipTimestamps(
 ): Promise<ClipSelectionResult> {
   const result = await dbPool.query(
     `
-      SELECT transcript_text
+      SELECT transcript_text, youtube_url, clip_selection_mode, requested_clip_count
       FROM jobs
       WHERE id = $1
     `,
@@ -91,6 +93,10 @@ export async function selectClipTimestamps(
   }
 
   const transcriptText = result.rows[0].transcript_text;
+  const youtubeUrl = result.rows[0].youtube_url;
+  const clipSelectionMode = result.rows[0]
+    .clip_selection_mode as ClipSelectionMode;
+  const requestedClipCount = Number(result.rows[0].requested_clip_count);
 
   if (typeof transcriptText !== "string" || transcriptText.trim() === "") {
     throw new Error(
@@ -99,15 +105,18 @@ export async function selectClipTimestamps(
   }
 
   const transcriptEndTimeSeconds = getTranscriptEndTimeSeconds(transcriptText);
-  const clipSelector = createClipSelector();
+  const videoDurationSeconds = await getVideoDuration(youtubeUrl);
+  const clipSelector = createClipSelector(clipSelectionMode);
   const suggestions = await clipSelector.selectClips({
     transcript: transcriptText,
     transcriptEndTimeSeconds,
+    videoDurationSeconds,
+    requestedClipCount,
   });
 
   return {
     clips: suggestions.map((suggestion) =>
-      validateClipSuggestion(suggestion, transcriptEndTimeSeconds),
+      validateClipSuggestion(suggestion, videoDurationSeconds),
     ),
   };
 }
@@ -328,7 +337,7 @@ function readSecondsAfterLabel(
 
 function validateClipSuggestion(
   clip: SelectedClip,
-  transcriptEndTimeSeconds: number,
+  videoDurationSeconds: number,
 ): SelectedClip {
   const title = clip.title.trim();
   const reason = clip.reason.trim();
@@ -340,9 +349,9 @@ function validateClipSuggestion(
 
   if (
     clip.startTimeSeconds < 0 ||
-    clip.endTimeSeconds > transcriptEndTimeSeconds
+    clip.endTimeSeconds > videoDurationSeconds
   ) {
-    throw new Error("The LLM returned a clip outside the transcript timestamps.");
+    throw new Error("The LLM returned a clip outside the video duration.");
   }
 
   if (durationSeconds < 20 || durationSeconds > 60) {

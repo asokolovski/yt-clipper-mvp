@@ -3,6 +3,7 @@ import path from "node:path";
 
 import express from "express";
 
+import type { ClipSelectionMode } from "./clip-selection/types.js";
 import { dbPool } from "./db/pool.js";
 import { getTemporalClient } from "./temporal/client.js";
 import { CLIP_GENERATION_TASK_QUEUE } from "./temporal/constants.js";
@@ -24,6 +25,8 @@ app.get("/api/jobs", async (_request, response) => {
           id,
           workflow_id,
           youtube_url,
+          clip_selection_mode,
+          requested_clip_count,
           status,
           error_message,
           created_at,
@@ -38,6 +41,8 @@ app.get("/api/jobs", async (_request, response) => {
         id: job.id,
         workflowId: job.workflow_id,
         youtubeUrl: job.youtube_url,
+        clipSelectionMode: job.clip_selection_mode,
+        requestedClipCount: job.requested_clip_count,
         status: job.status,
         errorMessage: job.error_message,
         createdAt: job.created_at,
@@ -53,6 +58,8 @@ app.get("/api/jobs", async (_request, response) => {
 
 app.post("/api/jobs", async (request, response) => {
   const youtubeUrl = request.body?.youtubeUrl;
+  const clipSelectionMode = request.body?.clipSelectionMode;
+  const requestedClipCount = request.body?.requestedClipCount;
 
   if (
     typeof youtubeUrl !== "string" ||
@@ -65,14 +72,41 @@ app.post("/api/jobs", async (request, response) => {
     });
   }
 
+  if (clipSelectionMode !== "ai" && clipSelectionMode !== "sequential") {
+    return response.status(400).json({
+      error: "clipSelectionMode must be either 'ai' or 'sequential'",
+    });
+  }
+
+  const validatedRequestedClipCount = getValidatedRequestedClipCount({
+    clipSelectionMode,
+    requestedClipCount,
+  });
+
+  if (validatedRequestedClipCount instanceof Error) {
+    return response.status(400).json({
+      error: validatedRequestedClipCount.message,
+    });
+  }
+
   try {
     const result = await dbPool.query(
       `
-        INSERT INTO jobs (youtube_url)
-        VALUES ($1)
-        RETURNING id, youtube_url, status, created_at
+        INSERT INTO jobs (youtube_url, clip_selection_mode, requested_clip_count)
+        VALUES ($1, $2, $3)
+        RETURNING
+          id,
+          youtube_url,
+          clip_selection_mode,
+          requested_clip_count,
+          status,
+          created_at
       `,
-      [youtubeUrl.trim()],
+      [
+        youtubeUrl.trim(),
+        clipSelectionMode,
+        validatedRequestedClipCount,
+      ],
     );
 
     const createdJob = result.rows[0];
@@ -104,6 +138,8 @@ app.post("/api/jobs", async (request, response) => {
       id: createdJob.id,
       workflowId,
       youtubeUrl: createdJob.youtube_url,
+      clipSelectionMode: createdJob.clip_selection_mode as ClipSelectionMode,
+      requestedClipCount: createdJob.requested_clip_count,
       status: createdJob.status,
       createdAt: createdJob.created_at,
     });
@@ -116,6 +152,30 @@ app.post("/api/jobs", async (request, response) => {
   }
 });
 
+function getValidatedRequestedClipCount(input: {
+  clipSelectionMode: ClipSelectionMode;
+  requestedClipCount: unknown;
+}): number | Error {
+  if (input.clipSelectionMode === "sequential") {
+    // Sequential mode ignores clip count and splits the whole video into
+    // fixed-length parts, but the current schema still requires a number.
+    return 1;
+  }
+
+  if (
+    typeof input.requestedClipCount !== "number" ||
+    !Number.isInteger(input.requestedClipCount)
+  ) {
+    return new Error("requestedClipCount must be an integer for AI mode.");
+  }
+
+  if (input.requestedClipCount < 1 || input.requestedClipCount > 5) {
+    return new Error("AI mode supports between 1 and 5 clips.");
+  }
+
+  return input.requestedClipCount;
+}
+
 app.get("/api/jobs/:jobId", async (request, response) => {
   const { jobId } = request.params;
 
@@ -126,6 +186,8 @@ app.get("/api/jobs/:jobId", async (request, response) => {
           id,
           workflow_id,
           youtube_url,
+          clip_selection_mode,
+          requested_clip_count,
           status,
           error_message,
           created_at,
@@ -146,6 +208,8 @@ app.get("/api/jobs/:jobId", async (request, response) => {
       id: job.id,
       workflowId: job.workflow_id,
       youtubeUrl: job.youtube_url,
+      clipSelectionMode: job.clip_selection_mode,
+      requestedClipCount: job.requested_clip_count,
       status: job.status,
       errorMessage: job.error_message,
       createdAt: job.created_at,
