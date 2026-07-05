@@ -1,4 +1,71 @@
 services:
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: runtime
+    depends_on:
+      database:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      TEMPORAL_ADDRESS: temporal:7233
+      LLM_PROVIDER: ${LLM_PROVIDER}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_API_KEY: ${LLM_API_KEY}
+    command: npm run start
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./storage:/app/storage
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+    restart: "no"
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    depends_on:
+      database:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
+      TEMPORAL_ADDRESS: temporal:7233
+      LLM_PROVIDER: ${LLM_PROVIDER}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_API_KEY: ${LLM_API_KEY}
+    command: npm run worker:start
+    volumes:
+      - ./storage:/app/storage
+    restart: unless-stopped
+
   database:
     image: postgres:17-alpine
     environment:
@@ -30,6 +97,7 @@ services:
 
   temporal:
     image: temporalio/auto-setup:1.29.1
+    restart: unless-stopped
     depends_on:
       temporal-database:
         condition: service_healthy
@@ -44,6 +112,7 @@ services:
 
   temporal-ui:
     image: temporalio/ui:2.49.1
+    restart: unless-stopped
     depends_on:
       - temporal
     environment:

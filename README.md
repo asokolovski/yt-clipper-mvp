@@ -13,6 +13,94 @@ Current high-level flow:
 7. Render MP4 clips with FFmpeg.
 8. Save clip metadata in Postgres and files on local disk.
 
+## Running The App
+
+There are now two main ways to run this project.
+
+### Option 1: Full Docker Compose
+
+Goal:
+Run the whole app in containers, including the frontend, API, worker, Postgres, and Temporal.
+
+Use this when you want the easiest "clone and run" experience.
+
+Steps:
+
+1. Copy `.env.example` to `.env`
+2. Fill in `LLM_API_KEY`
+3. Run:
+
+```bash
+docker compose up --build
+```
+
+What starts:
+
+- frontend at `http://localhost:8080`
+- API at `http://localhost:3000`
+- Temporal UI at `http://localhost:8233`
+- Postgres
+- Temporal
+- a one-off migration container
+- the Temporal worker
+
+Notes:
+
+- The frontend talks to the API through Nginx at `http://localhost:8080/api/...`
+- The API is also exposed directly on `http://localhost:3000` for easier debugging
+- Generated clip files are shared through the local `./storage` folder
+
+### Option 2: Local App Dev + Compose For Infra
+
+Goal:
+Run the frontend, API, and worker directly on your machine, while still using Docker Compose for infrastructure services like Postgres and Temporal.
+
+Use this when you want fast iteration with local TypeScript/Vite dev servers.
+
+Yes, this mode still uses Docker Compose, but only for infrastructure.
+
+Start the infrastructure:
+
+```bash
+docker compose up database temporal-database temporal temporal-ui
+```
+
+Then run the app pieces locally in separate terminals:
+
+```bash
+npm install
+npm run db:migrate
+npm run dev
+```
+
+```bash
+npm run worker:dev
+```
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+What runs where:
+
+- frontend dev server on Vite
+- backend API locally on `http://localhost:3000`
+- worker locally
+- Postgres in Docker on `localhost:5433`
+- Temporal in Docker on `localhost:7233`
+
+Important difference:
+
+- Full Compose mode runs everything in containers
+- Local dev mode runs only the infrastructure in containers, and the app code locally
+
+### Which One Should You Use?
+
+- Use full Compose when you want the simplest startup story
+- Use local app dev when you want faster code-edit feedback while building features
+
 ## Current Endpoints
 
 ### `GET /health`

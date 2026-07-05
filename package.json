@@ -13,7 +13,8 @@
     "db:rollback": "node-pg-migrate --envPath .env down",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "worker:start": "node dist/temporal/worker.js"
   },
   "repository": {
     "type": "git",

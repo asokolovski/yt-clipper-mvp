@@ -8,17 +8,6 @@ import "./HomePage.css";
 
 const POLL_INTERVAL_MS = 5000;
 
-const MOCK_JOB: Job = {
-  id: "51ea1a36-fd5c-4420-9bc5-3e86f574b353",
-  workflowId: "clip-generation-51ea1a36-fd5c-4420-9bc5-3e86f574b353",
-  youtubeUrl: "https://www.youtube.com/watch?v=TG6XSFeOT3g",
-  clipSelectionMode: "ai",
-  requestedClipCount: 3,
-  status: "completed",
-  errorMessage: null,
-  createdAt: "2026-06-27T23:09:26.238Z",
-  updatedAt: "2026-06-27T23:09:47.802Z",
-};
 
 function HomePage() {
   const [youtubeUrl, setYoutubeUrl] = useState("");
