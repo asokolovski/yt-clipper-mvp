@@ -128,6 +128,16 @@ Example:
 curl http://localhost:3000/api/clips/clip-id/stream
 ```
 
+### `GET /api/jobs/:jobId/download`
+
+Downloads all completed clips for a job as one zip archive.
+
+Example:
+
+```bash
+curl -L http://localhost:3000/api/jobs/job-id/download --output clips.zip
+```
+
 ## AI vs Sequential
 
 There are currently two clip-selection strategies.

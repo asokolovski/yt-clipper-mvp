@@ -1,6 +1,8 @@
+import { createReadStream } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
 
+import * as archiver from "archiver";
 import express from "express";
 
 import type { ClipSelectionMode } from "./clip-selection/types.js";
@@ -322,17 +324,41 @@ app.get("/api/clips/:clipId/stream", async (request, response) => {
   return response.sendFile(clip.absoluteFilePath);
 });
 
-app.get("/api/clips/:clipId/download", async (request, response) => {
-  const clip = await getCompletedClipById(request.params.clipId, response);
+app.get("/api/jobs/:jobId/download", async (request, response) => {
+  const clips = await getCompletedClipsByJobId(request.params.jobId, response);
 
-  if (clip === null) {
+  if (clips === null) {
     return;
   }
 
-  return response.download(
-    clip.absoluteFilePath,
-    `${createDownloadFileName(clip.title)}.mp4`,
+  response.setHeader("Content-Type", "application/zip");
+  response.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${createJobDownloadFileName(request.params.jobId)}"`,
   );
+
+  const archive = new archiver.ZipArchive({ zlib: { level: 9 } });
+
+  archive.on("error", (error: Error) => {
+    console.error("Failed to create job download archive:", error);
+
+    if (!response.headersSent) {
+      response.status(500).json({ error: "Failed to create job download" });
+      return;
+    }
+
+    response.end();
+  });
+
+  archive.pipe(response);
+
+  clips.forEach((clip, index) => {
+    archive.append(createReadStream(clip.absoluteFilePath), {
+      name: `${String(index + 1).padStart(2, "0")}-${createDownloadFileName(clip.title)}.mp4`,
+    });
+  });
+
+  await archive.finalize();
 });
 
 function createDownloadFileName(title: unknown): string {
@@ -351,6 +377,10 @@ function createDownloadFileName(title: unknown): string {
   }
 
   return cleanedTitle;
+}
+
+function createJobDownloadFileName(jobId: string): string {
+  return `job-${jobId}-clips.zip`;
 }
 
 async function getCompletedClipById(
@@ -410,6 +440,83 @@ async function getCompletedClipById(
   } catch (error: unknown) {
     console.error("Failed to load clip file:", error);
     response.status(500).json({ error: "Failed to load clip file" });
+    return null;
+  }
+}
+
+async function getCompletedClipsByJobId(
+  jobId: string,
+  response: express.Response,
+): Promise<Array<{ absoluteFilePath: string; title: string }> | null> {
+  try {
+    const jobResult = await dbPool.query(
+      `
+        SELECT id, status
+        FROM jobs
+        WHERE id::text = $1
+      `,
+      [jobId],
+    );
+
+    if (jobResult.rowCount === 0) {
+      response.status(404).json({ error: "Job not found" });
+      return null;
+    }
+
+    const clipsResult = await dbPool.query(
+      `
+        SELECT
+          id,
+          title,
+          status,
+          file_path
+        FROM clips
+        WHERE job_id = $1
+          AND status = 'completed'
+        ORDER BY start_time_seconds
+      `,
+      [jobId],
+    );
+
+    if (clipsResult.rowCount === 0) {
+      response.status(409).json({
+        error: "No completed clips are ready to download yet",
+      });
+      return null;
+    }
+
+    const completedClips: Array<{ absoluteFilePath: string; title: string }> =
+      [];
+
+    for (const clip of clipsResult.rows) {
+      if (typeof clip.file_path !== "string" || clip.file_path.trim() === "") {
+        response.status(404).json({
+          error: `Clip file path was not found for clip ${clip.id}`,
+        });
+        return null;
+      }
+
+      const absoluteFilePath = path.resolve(clip.file_path);
+
+      try {
+        await access(absoluteFilePath);
+      } catch {
+        response.status(404).json({
+          error: `Clip file was not found on disk for clip ${clip.id}`,
+        });
+        return null;
+      }
+
+      completedClips.push({
+        absoluteFilePath,
+        title: clip.title,
+      });
+    }
+
+    return completedClips;
+  } catch (error: unknown) {
+    console.error("Failed to load job clips for download:", error);
+    response.status(500).json({ error: "Failed to load job clips" });
     return null;
   }
 }

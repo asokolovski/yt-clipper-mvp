@@ -28,6 +28,7 @@
   },
   "homepage": "https://github.com/asokolovski/yt-clipper-mvp#readme",
   "devDependencies": {
+    "@types/archiver": "^8.0.0",
     "@types/express": "^5.0.6",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.20.0",
@@ -40,6 +41,7 @@
     "@temporalio/client": "^1.18.1",
     "@temporalio/worker": "^1.18.1",
     "@temporalio/workflow": "^1.18.1",
+    "archiver": "^8.0.0",
     "express": "^5.2.1",
     "openai": "^6.44.0",
     "pg": "^8.22.0",
