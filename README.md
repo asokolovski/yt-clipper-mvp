@@ -48,7 +48,8 @@ Notes:
 
 - The frontend talks to the API through Nginx at `http://localhost:8080/api/...`
 - The API is also exposed directly on `http://localhost:3000` for easier debugging
-- Generated clip files are shared through the local `./storage` folder
+- Generated clip files are shared through a Docker-managed `clip_storage` volume
+- If you want clip files in a real local folder for inspection, run `docker compose -f compose.yaml -f compose.dev.yaml up --build` to override that with `./storage:/app/storage`
 
 ### Option 2: Local App Dev + Compose For Infra
 

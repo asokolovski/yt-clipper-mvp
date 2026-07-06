@@ -30,7 +30,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./storage:/app/storage
+      - clip_storage:/app/storage
     restart: unless-stopped
 
   migrate:
@@ -63,7 +63,7 @@ services:
       LLM_API_KEY: ${LLM_API_KEY}
     command: npm run worker:start
     volumes:
-      - ./storage:/app/storage
+      - clip_storage:/app/storage
     restart: unless-stopped
 
   database:
@@ -121,5 +121,6 @@ services:
       - "8233:8080"
 
 volumes:
+  clip_storage:
   postgres_data:
   temporal_postgres_data:
