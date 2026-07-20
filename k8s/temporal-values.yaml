@@ -1,0 +1,86 @@
+fullnameOverride: temporal
+
+serviceAccount:
+  create: true
+
+server:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  terminationGracePeriodSeconds: 30
+  config:
+    logLevel: info
+    persistence:
+      datastores:
+        default:
+          sql:
+            createDatabase: false
+            manageSchema: true
+            pluginName: postgres12
+            driverName: postgres12
+            databaseName: temporal
+            connectAddr: temporal-database.temporal.svc.cluster.local:5432
+            connectProtocol: tcp
+            user: temporal
+            existingSecret: temporal-postgres-credentials
+            secretKey: POSTGRES_PASSWORD
+            maxConns: 10
+            maxIdleConns: 10
+        visibility:
+          sql:
+            createDatabase: true
+            manageSchema: true
+            pluginName: postgres12
+            driverName: postgres12
+            databaseName: temporal_visibility
+            connectAddr: temporal-database.temporal.svc.cluster.local:5432
+            connectProtocol: tcp
+            user: temporal
+            existingSecret: temporal-postgres-credentials
+            secretKey: POSTGRES_PASSWORD
+            maxConns: 10
+            maxIdleConns: 10
+    namespaces:
+      create: true
+      namespace:
+        - name: default
+          retention: 3d
+
+admintools:
+  enabled: true
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+web:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+schema:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+shims:
+  dockerize: false
+  elasticsearchTool: false

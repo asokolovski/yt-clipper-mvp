@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clip-worker
+  namespace: yt-clipper
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: clip-worker
+  template:
+    metadata:
+      labels:
+        app: clip-worker
+    spec:
+      containers:
+        - name: worker
+          image: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/backend:v1
+          command:
+            - npm
+          args:
+            - run
+            - worker:start
+
+          env:
+            # Same PostgreSQL variables/DATABASE_URL as the API
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_DB
+
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_USER
+
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_PASSWORD
+
+            - name: DATABASE_URL
+              value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@database:5432/$(POSTGRES_DB)
+
+            - name: TEMPORAL_ADDRESS
+              value: temporal-frontend.temporal.svc.cluster.local:7233
+
+            - name: LLM_PROVIDER
+              value: openai
+
+            - name: LLM_MODEL
+              value: gpt-5.4-mini
+
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llm-credentials
+                  key: LLM_API_KEY
+
+          volumeMounts:
+            - name: clip-storage
+              mountPath: /app/storage
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+
+      volumes:
+        - name: clip-storage
+          persistentVolumeClaim:
+            claimName: clip-storage
