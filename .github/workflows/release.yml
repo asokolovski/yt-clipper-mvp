@@ -1,0 +1,22 @@
+name: Release
+
+# This is manual and does not publish anything yet.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the repository
+        uses: actions/checkout@v7
+
+      - name: Show the release plan
+        run: |
+          echo "TODO: authenticate to Google Cloud"
+          echo "TODO: choose which Cloud Build file to run"
+          echo "TODO: build and push the selected image"
+          echo "TODO: update the production image tag in Git"

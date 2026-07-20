@@ -18,6 +18,19 @@ function HomePage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [createdJob, setCreatedJob] = useState<Job | null>(null);
 
+  const refreshJob = async (jobId: string) => {
+    try {
+      const latestJob = await getJob(jobId);
+      setCreatedJob(latestJob);
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Failed to load job");
+      }
+    }
+  };
+
   useEffect(() => {
     document.title = "Create Clips | YouTube Clipper MVP";
   }, []);
@@ -76,18 +89,6 @@ function HomePage() {
     }
   };
 
-  const refreshJob = async (jobId: string) => {
-    try {
-      const latestJob = await getJob(jobId);
-      setCreatedJob(latestJob);
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Failed to load job");
-      }
-    }
-  };
 
   return (
     <main className="home-page">

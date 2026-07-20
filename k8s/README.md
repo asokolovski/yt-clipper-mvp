@@ -20,4 +20,4 @@ kubectl kustomize k8s/infrastructure/temporal
 
 Argo CD should watch `k8s/app/overlays/production`. Long-lived infrastructure can be managed separately.
 
-`cloudbuild.yaml` stays at the repository root because it configures image builds rather than Kubernetes resources.
+The image build configurations live under the repository-level `cloudbuild/` directory because they configure builds rather than Kubernetes resources.

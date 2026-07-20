@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the repository
+        uses: actions/checkout@v7
+
+      - name: Use Node from .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check backend
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Check frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Check Kubernetes configuration
+        run: |
+          kubectl kustomize k8s/app/overlays/production > /dev/null
+          kubectl kustomize k8s/infrastructure/yt-clipper > /dev/null
+          kubectl kustomize k8s/infrastructure/temporal > /dev/null

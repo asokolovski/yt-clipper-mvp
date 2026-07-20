@@ -1,0 +1,20 @@
+substitutions:
+  _REGION: northamerica-northeast2
+  _REPOSITORY: yt-clipper
+  _TAG: v1
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: build-backend
+    args:
+      - build
+      - --target
+      - runtime
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/backend:${_TAG}
+      - .
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/backend:${_TAG}
+
+timeout: 1200s
