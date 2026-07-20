@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/frontend:v1
+          image: frontend
           ports:
             - name: http
               containerPort: 80

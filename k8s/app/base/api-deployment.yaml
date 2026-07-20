@@ -1,29 +1,28 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: clip-worker
+  name: api
   namespace: yt-clipper
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: clip-worker
+      app: api
   template:
     metadata:
       labels:
-        app: clip-worker
+        app: api
     spec:
       containers:
-        - name: worker
-          image: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/backend:v1
-          command:
-            - npm
-          args:
-            - run
-            - worker:start
-
+        - name: api
+          image: backend
+          volumeMounts:
+            - name: clip-storage
+              mountPath: /app/storage
+          ports:
+            - name: http
+              containerPort: 3000
           env:
-            # Same PostgreSQL variables/DATABASE_URL as the API
             - name: POSTGRES_DB
               valueFrom:
                 secretKeyRef:
@@ -48,30 +47,30 @@ spec:
             - name: TEMPORAL_ADDRESS
               value: temporal-frontend.temporal.svc.cluster.local:7233
 
-            - name: LLM_PROVIDER
-              value: openai
+            - name: PORT
+              value: "3000"
 
-            - name: LLM_MODEL
-              value: gpt-5.4-mini
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
 
-            - name: LLM_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: llm-credentials
-                  key: LLM_API_KEY
-
-          volumeMounts:
-            - name: clip-storage
-              mountPath: /app/storage
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
 
           resources:
             requests:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 100m
+              memory: 256Mi
             limits:
-              cpu: "2"
-              memory: 4Gi
-
+              cpu: "1"
+              memory: 512Mi
       volumes:
         - name: clip-storage
           persistentVolumeClaim:

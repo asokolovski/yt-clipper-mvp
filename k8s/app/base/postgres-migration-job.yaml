@@ -1,8 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: postgres-migrate-v1
+  name: postgres-migrate
   namespace: yt-clipper
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 3
   activeDeadlineSeconds: 300
@@ -11,7 +14,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: migrate
-          image: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/migrate:v1
+          image: migrate
           env:
             - name: POSTGRES_DB
               valueFrom:

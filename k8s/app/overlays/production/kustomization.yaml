@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: backend
+    newName: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/backend
+    newTag: v1
+  - name: frontend
+    newName: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/frontend
+    newTag: v1
+  - name: migrate
+    newName: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/migrate
+    newTag: v1
