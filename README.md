@@ -382,3 +382,4 @@ That makes the MVP much more reliable even before adding a lot of extra infrastr
 - Add a real backend endpoint contract for mode-specific requests
 - Add another LLM provider behind `LlmClient`
 - Add tests around clip-selection behavior
+test
