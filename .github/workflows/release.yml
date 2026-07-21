@@ -1,12 +1,14 @@
 name: Release
 
-# This is manual and does not publish anything yet.
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
+  pull-requests: write
 
 jobs:
   release:
@@ -14,8 +16,85 @@ jobs:
     steps:
       - name: Download the repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed images
+        id: changes
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          backend=false
+          frontend=false
+          migrate=false
+
+          if [[ "$BEFORE_SHA" =~ ^0+$ ]] || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            echo "The previous revision is unavailable; all images will be built."
+            backend=true
+            frontend=true
+            migrate=true
+          else
+            changed_files="$(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")"
+            echo "Changed files:"
+            printf '%s\n' "$changed_files"
+
+            while IFS= read -r file; do
+              case "$file" in
+                src/*|Dockerfile|package.json|package-lock.json|tsconfig.json|.dockerignore|cloudbuild/backend.yaml)
+                  backend=true
+                  ;;
+              esac
+
+              case "$file" in
+                frontend/*|cloudbuild/frontend.yaml)
+                  frontend=true
+                  ;;
+              esac
+
+              case "$file" in
+                migrations/*|Dockerfile|package.json|package-lock.json|.dockerignore|cloudbuild/migrate.yaml)
+                  migrate=true
+                  ;;
+              esac
+
+              if [[ "$file" == ".github/workflows/release.yml" ]]; then
+                backend=true
+                frontend=true
+                migrate=true
+              fi
+            done <<< "$changed_files"
+          fi
+
+          if [[ "$backend" == true || "$frontend" == true || "$migrate" == true ]]; then
+            any=true
+          else
+            any=false
+          fi
+
+          {
+            echo "backend=$backend"
+            echo "frontend=$frontend"
+            echo "migrate=$migrate"
+            echo "any=$any"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Show the release plan
+        env:
+          BACKEND_CHANGED: ${{ steps.changes.outputs.backend }}
+          FRONTEND_CHANGED: ${{ steps.changes.outputs.frontend }}
+          MIGRATE_CHANGED: ${{ steps.changes.outputs.migrate }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "backend=$BACKEND_CHANGED"
+          echo "frontend=$FRONTEND_CHANGED"
+          echo "migrate=$MIGRATE_CHANGED"
+          echo "image tag=$IMAGE_TAG"
 
       - name: Authenticate to Google Cloud
+        if: steps.changes.outputs.any == 'true'
         id: auth
         uses: google-github-actions/auth@v1
         with:
@@ -23,19 +102,170 @@ jobs:
           workload_identity_provider: projects/662369844477/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: yt-clipper-github-release@yt-clipper-gke.iam.gserviceaccount.com
       
-      - name: Set up Google Clous CLI
+      - name: Set up Google Cloud CLI
+        if: steps.changes.outputs.any == 'true'
         uses: google-github-actions/setup-gcloud@v3
-      
-      - name: Verify Google Cloud authentication
-        run: |
-          gcloud auth list --filter="status:ACTIVE" --format="value(account)"
-          gcloud config get-value project
-          gcloud auth print-access-token --quiet > /dev/null
-          echo "Google Cloud authentication succeeded"
 
-      - name: Show the release plan
+      - name: Build and push the backend image
+        if: steps.changes.outputs.backend == 'true'
         run: |
-          echo "TODO: authenticate to Google Cloud"
-          echo "TODO: choose which Cloud Build file to run"
-          echo "TODO: build and push the selected image"
-          echo "TODO: update the production image tag in Git"
+          gcloud builds submit . \
+            --config=cloudbuild/backend.yaml \
+            --substitutions=_TAG="$GITHUB_SHA"
+
+      - name: Build and push the frontend image
+        if: steps.changes.outputs.frontend == 'true'
+        run: |
+          gcloud builds submit . \
+            --config=cloudbuild/frontend.yaml \
+            --substitutions=_TAG="$GITHUB_SHA"
+
+      - name: Build and push the migration image
+        if: steps.changes.outputs.migrate == 'true'
+        run: |
+          gcloud builds submit . \
+            --config=cloudbuild/migrate.yaml \
+            --substitutions=_TAG="$GITHUB_SHA"
+
+      - name: Update production image tags
+        id: production_tags
+        if: steps.changes.outputs.any == 'true'
+        env:
+          BACKEND_CHANGED: ${{ steps.changes.outputs.backend }}
+          FRONTEND_CHANGED: ${{ steps.changes.outputs.frontend }}
+          MIGRATE_CHANGED: ${{ steps.changes.outputs.migrate }}
+          GH_TOKEN: ${{ github.token }}
+          KUSTOMIZATION_PATH: k8s/app/overlays/production/kustomization.yaml
+          RELEASE_BRANCH: release/production
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          existing_pr="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --base main \
+              --head "$RELEASE_BRANCH" \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          remote_branch_sha=""
+          if git fetch origin "refs/heads/$RELEASE_BRANCH:refs/remotes/origin/$RELEASE_BRANCH"; then
+            remote_branch_sha="$(git rev-parse "refs/remotes/origin/$RELEASE_BRANCH")"
+          fi
+
+          if [[ -n "$existing_pr" ]]; then
+            if [[ -z "$remote_branch_sha" ]]; then
+              echo "The open release PR does not have a remote release branch."
+              exit 1
+            fi
+
+            git switch --force-create "$RELEASE_BRANCH" "refs/remotes/origin/$RELEASE_BRANCH"
+            git rebase "$GITHUB_SHA"
+          else
+            git switch --force-create "$RELEASE_BRANCH" "$GITHUB_SHA"
+          fi
+
+          update_tag() {
+            local image="$1"
+
+            if ! grep -q "^  - name: $image$" "$KUSTOMIZATION_PATH"; then
+              echo "Image $image was not found in $KUSTOMIZATION_PATH."
+              exit 1
+            fi
+
+            sed -i "/^  - name: $image$/{n;n;s/^    newTag: .*/    newTag: $GITHUB_SHA/;}" "$KUSTOMIZATION_PATH"
+
+            if ! grep -A2 "^  - name: $image$" "$KUSTOMIZATION_PATH" | grep -q "^    newTag: $GITHUB_SHA$"; then
+              echo "Failed to update the $image image tag."
+              exit 1
+            fi
+          }
+
+          if [[ "$BACKEND_CHANGED" == true ]]; then
+            update_tag backend
+          fi
+
+          if [[ "$FRONTEND_CHANGED" == true ]]; then
+            update_tag frontend
+          fi
+
+          if [[ "$MIGRATE_CHANGED" == true ]]; then
+            update_tag migrate
+          fi
+
+          if git diff --quiet -- "$KUSTOMIZATION_PATH"; then
+            echo "The production image tags already match this release."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git diff --check
+          git diff -- "$KUSTOMIZATION_PATH"
+          git add "$KUSTOMIZATION_PATH"
+          git commit -m "release: deploy ${GITHUB_SHA::12}"
+
+          if [[ -n "$remote_branch_sha" ]]; then
+            git push \
+              --force-with-lease="refs/heads/$RELEASE_BRANCH:$remote_branch_sha" \
+              origin \
+              "HEAD:refs/heads/$RELEASE_BRANCH"
+          else
+            git push --set-upstream origin "$RELEASE_BRANCH"
+          fi
+
+          {
+            echo "existing_pr=$existing_pr"
+            echo "pushed=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the production release PR
+        if: steps.production_tags.outputs.pushed == 'true'
+        env:
+          BACKEND_CHANGED: ${{ steps.changes.outputs.backend }}
+          FRONTEND_CHANGED: ${{ steps.changes.outputs.frontend }}
+          MIGRATE_CHANGED: ${{ steps.changes.outputs.migrate }}
+          EXISTING_PR: ${{ steps.production_tags.outputs.existing_pr }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: release/production
+        run: |
+          set -euo pipefail
+
+          title="Release ${GITHUB_SHA::12} to production"
+          body="$(printf '%s\n' \
+            "Automated production release for commit \`$GITHUB_SHA\`." \
+            "" \
+            "Images built in this workflow run:" \
+            "- backend: \`$BACKEND_CHANGED\`" \
+            "- frontend: \`$FRONTEND_CHANGED\`" \
+            "- migrate: \`$MIGRATE_CHANGED\`" \
+            "" \
+            "Merging this PR updates the desired state watched by Argo CD.")"
+
+          if [[ -n "$EXISTING_PR" ]]; then
+            pr_url="$(
+              gh api \
+                --method PATCH \
+                "repos/$GITHUB_REPOSITORY/pulls/$EXISTING_PR" \
+                -f title="$title" \
+                -f body="$body" \
+                --jq .html_url
+            )"
+            echo "Updated production release PR: $pr_url"
+          else
+            pr_url="$(
+              gh api \
+                --method POST \
+                "repos/$GITHUB_REPOSITORY/pulls" \
+                -f title="$title" \
+                -f body="$body" \
+                -f head="$RELEASE_BRANCH" \
+                -f base=main \
+                --jq .html_url
+            )"
+            echo "Opened production release PR: $pr_url"
+          fi
