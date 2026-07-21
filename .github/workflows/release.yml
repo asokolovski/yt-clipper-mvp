@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   release:
@@ -13,6 +14,24 @@ jobs:
     steps:
       - name: Download the repository
         uses: actions/checkout@v7
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v1
+        with:
+          project_id: yt-clipper-gke
+          workload_identity_provider: projects/662369844477/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: yt-clipper-github-release@yt-clipper-gke.iam.gserviceaccount.com
+      
+      - name: Set up Google Clous CLI
+        uses: google-github-actions/setup-gcloud@v3
+      
+      - name: Verify Google Cloud authentication
+        run: |
+          gcloud auth list --filter="status:ACTIVE" --format="value(account)"
+          gcloud config get-value project
+          gcloud auth print-access-token --quiet > /dev/null
+          echo "Google Cloud authentication succeeded"
 
       - name: Show the release plan
         run: |
