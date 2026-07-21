@@ -111,21 +111,24 @@ jobs:
         run: |
           gcloud builds submit . \
             --config=cloudbuild/backend.yaml \
-            --substitutions=_TAG="$GITHUB_SHA"
+            --substitutions=_TAG="$GITHUB_SHA" \
+            --suppress-logs
 
       - name: Build and push the frontend image
         if: steps.changes.outputs.frontend == 'true'
         run: |
           gcloud builds submit . \
             --config=cloudbuild/frontend.yaml \
-            --substitutions=_TAG="$GITHUB_SHA"
+            --substitutions=_TAG="$GITHUB_SHA" \
+            --suppress-logs
 
       - name: Build and push the migration image
         if: steps.changes.outputs.migrate == 'true'
         run: |
           gcloud builds submit . \
             --config=cloudbuild/migrate.yaml \
-            --substitutions=_TAG="$GITHUB_SHA"
+            --substitutions=_TAG="$GITHUB_SHA" \
+            --suppress-logs
 
       - name: Update production image tags
         id: production_tags
