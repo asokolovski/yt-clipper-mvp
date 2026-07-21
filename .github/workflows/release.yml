@@ -106,29 +106,77 @@ jobs:
         if: steps.changes.outputs.any == 'true'
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Build and push the backend image
-        if: steps.changes.outputs.backend == 'true'
+      - name: Build and push the selected images
+        if: steps.changes.outputs.any == 'true'
+        env:
+          BACKEND_CHANGED: ${{ steps.changes.outputs.backend }}
+          FRONTEND_CHANGED: ${{ steps.changes.outputs.frontend }}
+          MIGRATE_CHANGED: ${{ steps.changes.outputs.migrate }}
         run: |
-          gcloud builds submit . \
-            --config=cloudbuild/backend.yaml \
-            --substitutions=_TAG="$GITHUB_SHA" \
-            --suppress-logs
+          set -euo pipefail
 
-      - name: Build and push the frontend image
-        if: steps.changes.outputs.frontend == 'true'
-        run: |
-          gcloud builds submit . \
-            --config=cloudbuild/frontend.yaml \
-            --substitutions=_TAG="$GITHUB_SHA" \
-            --suppress-logs
+          submit_and_wait() {
+            local component="$1"
+            local config="$2"
+            local build_id
+            local status
 
-      - name: Build and push the migration image
-        if: steps.changes.outputs.migrate == 'true'
-        run: |
-          gcloud builds submit . \
-            --config=cloudbuild/migrate.yaml \
-            --substitutions=_TAG="$GITHUB_SHA" \
-            --suppress-logs
+            echo "Submitting the $component image build."
+            build_id="$(
+              gcloud builds submit . \
+                --config="$config" \
+                --substitutions=_TAG="$GITHUB_SHA" \
+                --async \
+                --format="value(id)"
+            )"
+
+            if [[ -z "$build_id" ]]; then
+              echo "Cloud Build did not return a build ID for $component."
+              return 1
+            fi
+
+            echo "Cloud Build ID for $component: $build_id"
+            echo "Logs: https://console.cloud.google.com/cloud-build/builds/$build_id?project=yt-clipper-gke"
+
+            while true; do
+              status="$(
+                gcloud builds describe "$build_id" \
+                  --region=global \
+                  --format="value(status)"
+              )"
+
+              case "$status" in
+                SUCCESS)
+                  echo "The $component image build succeeded."
+                  return 0
+                  ;;
+                FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                  echo "The $component image build failed with status $status."
+                  return 1
+                  ;;
+                QUEUED|PENDING|WORKING|STATUS_UNKNOWN)
+                  echo "The $component image build is $status."
+                  sleep 10
+                  ;;
+                *)
+                  echo "Cloud Build returned an unexpected status for $component: $status"
+                  return 1
+                  ;;
+              esac
+            done
+          }
+
+          if [[ "$BACKEND_CHANGED" == true ]]; then
+            submit_and_wait backend cloudbuild/backend.yaml
+          fi
+
+          if [[ "$FRONTEND_CHANGED" == true ]]; then
+            submit_and_wait frontend cloudbuild/frontend.yaml
+          fi
+
+          if [[ "$MIGRATE_CHANGED" == true ]]; then
+            submit_and_wait migrate cloudbuild/migrate.yaml
+          fi
 
       - name: Update production image tags
         id: production_tags
