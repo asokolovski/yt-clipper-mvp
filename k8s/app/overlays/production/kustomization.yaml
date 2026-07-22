@@ -10,7 +10,7 @@ images:
     newTag: 3c120cf1a0984ce1f4ff031c3726e0ba3ecf945c
   - name: frontend
     newName: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/frontend
-    newTag: 3c120cf1a0984ce1f4ff031c3726e0ba3ecf945c
+    newTag: 455f95573b306b9e8b0dd8bf266d783c0454fd45
   - name: migrate
     newName: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/migrate
     newTag: 3c120cf1a0984ce1f4ff031c3726e0ba3ecf945c
