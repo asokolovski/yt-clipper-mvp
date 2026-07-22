@@ -23,7 +23,7 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}
       TEMPORAL_ADDRESS: temporal:7233
-      LLM_PROVIDER: ${LLM_PROVIDER}
+      LLM_PROVIDER: ${LLM_PROVIDER} #not needed actually for api the llm envs
       LLM_MODEL: ${LLM_MODEL}
       LLM_API_KEY: ${LLM_API_KEY}
     command: npm run start
