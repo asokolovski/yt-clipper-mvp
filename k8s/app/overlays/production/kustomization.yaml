@@ -7,10 +7,10 @@ resources:
 images:
   - name: backend
     newName: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/backend
-    newTag: v1
+    newTag: 3c120cf1a0984ce1f4ff031c3726e0ba3ecf945c
   - name: frontend
     newName: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/frontend
-    newTag: v1
+    newTag: 3c120cf1a0984ce1f4ff031c3726e0ba3ecf945c
   - name: migrate
     newName: northamerica-northeast2-docker.pkg.dev/yt-clipper-gke/yt-clipper/migrate
-    newTag: v1
+    newTag: 3c120cf1a0984ce1f4ff031c3726e0ba3ecf945c
