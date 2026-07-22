@@ -116,7 +116,7 @@ export async function selectClipTimestamps(
 
   return {
     clips: suggestions.map((suggestion) =>
-      validateClipSuggestion(suggestion, videoDurationSeconds),
+      validateClipSuggestion(suggestion, videoDurationSeconds, clipSelectionMode),
     ),
   };
 }
@@ -338,6 +338,7 @@ function readSecondsAfterLabel(
 function validateClipSuggestion(
   clip: SelectedClip,
   videoDurationSeconds: number,
+  clipSelectionMode: ClipSelectionMode = "ai",
 ): SelectedClip {
   const title = clip.title.trim();
   const reason = clip.reason.trim();
@@ -348,13 +349,13 @@ function validateClipSuggestion(
   }
 
   if (
-    clip.startTimeSeconds < 0 ||
-    clip.endTimeSeconds > videoDurationSeconds
+    clipSelectionMode === "ai" &&
+    (clip.startTimeSeconds < 0 || clip.endTimeSeconds > videoDurationSeconds)
   ) {
     throw new Error("The LLM returned a clip outside the video duration.");
   }
 
-  if (durationSeconds < 20 || durationSeconds > 60) {
+  if (clipSelectionMode === "ai" && (durationSeconds < 20 || durationSeconds > 60)) {
     throw new Error("The LLM returned a clip that is not 20 to 60 seconds long.");
   }
 
