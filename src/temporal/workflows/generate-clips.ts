@@ -32,6 +32,7 @@ const {
   renderClipsActivity,
 } = proxyActivities<typeof activities>({
   startToCloseTimeout: "15 minutes",
+  heartbeatTimeout: "30 seconds",
   retry: {
     initialInterval: "5 seconds",
     backoffCoefficient: 2,
