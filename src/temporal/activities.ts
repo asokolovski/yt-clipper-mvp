@@ -1,3 +1,4 @@
+import { heartbeat } from "@temporalio/activity";
 import { getSubtitles } from "youtube-caption-extractor";
 
 import type {
@@ -175,10 +176,10 @@ export async function downloadVideoActivity(
   jobId: string,
   youtubeUrl: string,
 ): Promise<{ sourceVideoPath: string }> {
-  return await downloadVideo({
-    jobId,
-    youtubeUrl,
-  });
+  return withHeartbeats(
+    { phase: "downloading", jobId },
+    () => downloadVideo({ jobId, youtubeUrl }),
+  );
 }
 
 export async function renderClipsActivity(
@@ -186,54 +187,55 @@ export async function renderClipsActivity(
   sourceVideoPath: string,
   clips: StoredClip[],
 ): Promise<void> {
-  for (const clip of clips) {
-
-    await dbPool.query(
-      `
-        UPDATE clips
-        SET 
-          status = 'rendering', 
-          updated_at = NOW()
-        WHERE id = $1
-      `,
-      [clip.id],
-    );
-
-    try {
-      const renderedClip = await renderClip({
-        jobId,
-        clipId: clip.id,
-        sourceVideoPath,
-        startTimeSeconds: clip.startTimeSeconds,
-        endTimeSeconds: clip.endTimeSeconds,
-      });
-
+  return withHeartbeats({ phase: "rendering", jobId }, async () => {
+    for (const clip of clips) {
       await dbPool.query(
         `
           UPDATE clips
           SET
-            file_path = $1,
-            status = 'completed',
-            updated_at = NOW()
-          WHERE id = $2
-        `,
-        [renderedClip.filePath, renderedClip.clipId],
-      );
-    } catch (error: unknown) {
-      await dbPool.query(
-        `
-          UPDATE clips
-          SET
-            status = 'failed',
+            status = 'rendering',
             updated_at = NOW()
           WHERE id = $1
         `,
         [clip.id],
       );
 
-      throw error;
-    } 
-  }
+      try {
+        const renderedClip = await renderClip({
+          jobId,
+          clipId: clip.id,
+          sourceVideoPath,
+          startTimeSeconds: clip.startTimeSeconds,
+          endTimeSeconds: clip.endTimeSeconds,
+        });
+
+        await dbPool.query(
+          `
+            UPDATE clips
+            SET
+              file_path = $1,
+              status = 'completed',
+              updated_at = NOW()
+            WHERE id = $2
+          `,
+          [renderedClip.filePath, renderedClip.clipId],
+        );
+      } catch (error: unknown) {
+        await dbPool.query(
+          `
+            UPDATE clips
+            SET
+              status = 'failed',
+              updated_at = NOW()
+            WHERE id = $1
+          `,
+          [clip.id],
+        );
+
+        throw error;
+      }
+    }
+  });
 }
 
 export async function markJobFailed(
@@ -384,5 +386,22 @@ async function updateJob(
 
   if (result.rowCount !== 1) {
     throw new Error(`Could not update job ${jobId} because it was not found.`);
+  }
+}
+
+async function withHeartbeats<T>(
+  details: object,
+  operation: () => Promise<T>,
+): Promise<T> {
+  heartbeat(details);
+
+  const timer = setInterval(() => {
+    heartbeat(details);
+  }, 10_000);
+
+  try {
+    return await operation();
+  } finally {
+    clearInterval(timer);
   }
 }
