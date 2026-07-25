@@ -6,153 +6,208 @@ import * as archiver from "archiver";
 import express from "express";
 
 import type { ClipSelectionMode } from "./clip-selection/types.js";
-import { dbPool } from "./db/pool.js";
-import { getTemporalClient } from "./temporal/client.js";
-import { CLIP_GENERATION_TASK_QUEUE } from "./temporal/constants.js";
-import { generateClipsWorkflow } from "./temporal/workflows/generate-clips.js";
+import type { ClipsService } from "./clip-management/clip-service.js";
+import type { JobsService } from "./jobs/job-service.js";
 
-export const app = express();
+export type AppDependencies = {
+  jobService: JobsService;
+  clipService: ClipsService;
+};
 
-app.use(express.json());
+export function createApp({
+  jobService,
+  clipService,
+}: AppDependencies): express.Express {
+  const app = express();
 
-app.get("/health", (_request, response) => {
-  response.json({ status: "ok" });
-});
+  app.use(express.json());
 
-app.get("/api/jobs", async (_request, response) => {
-  try {
-    const result = await dbPool.query(
-      `
-        SELECT
-          id,
-          workflow_id,
-          youtube_url,
-          clip_selection_mode,
-          requested_clip_count,
-          status,
-          error_message,
-          created_at,
-          updated_at
-        FROM jobs
-        ORDER BY created_at DESC
-      `,
-    );
-
-    return response.json({
-      jobs: result.rows.map((job) => ({
-        id: job.id,
-        workflowId: job.workflow_id,
-        youtubeUrl: job.youtube_url,
-        clipSelectionMode: job.clip_selection_mode,
-        requestedClipCount: job.requested_clip_count,
-        status: job.status,
-        errorMessage: job.error_message,
-        createdAt: job.created_at,
-        updatedAt: job.updated_at,
-      })),
-    });
-  } catch (error: unknown) {
-    console.error("Failed to list jobs:", error);
-
-    return response.status(500).json({ error: "Failed to list jobs" });
-  }
-});
-
-app.post("/api/jobs", async (request, response) => {
-  const youtubeUrl = request.body?.youtubeUrl;
-  const clipSelectionMode = request.body?.clipSelectionMode;
-  const requestedClipCount = request.body?.requestedClipCount;
-
-  if (
-    typeof youtubeUrl !== "string" ||
-    youtubeUrl.trim() === "" ||
-    !youtubeUrl.includes("youtube.com/watch?v=")
-  ) {
-    return response.status(400).json({
-      error:
-        "Valid youtubeUrl of the form youtube.com/watch?v=<video_id> is required",
-    });
-  }
-
-  if (clipSelectionMode !== "ai" && clipSelectionMode !== "sequential") {
-    return response.status(400).json({
-      error: "clipSelectionMode must be either 'ai' or 'sequential'",
-    });
-  }
-
-  const validatedRequestedClipCount = getValidatedRequestedClipCount({
-    clipSelectionMode,
-    requestedClipCount,
+  app.get("/health", (_request, response) => {
+    response.json({ status: "ok" });
   });
 
-  if (validatedRequestedClipCount instanceof Error) {
-    return response.status(400).json({
-      error: validatedRequestedClipCount.message,
-    });
-  }
+  app.get("/api/jobs", async (_request, response) => {
+    try {
+      const jobs = await jobService.listJobs();
 
-  try {
-    const result = await dbPool.query(
-      `
-        INSERT INTO jobs (youtube_url, clip_selection_mode, requested_clip_count)
-        VALUES ($1, $2, $3)
-        RETURNING
-          id,
-          youtube_url,
-          clip_selection_mode,
-          requested_clip_count,
-          status,
-          created_at
-      `,
-      [
-        youtubeUrl.trim(),
+      return response.json({ jobs });
+    } catch (error: unknown) {
+      console.error("Failed to list jobs:", error);
+
+      return response.status(500).json({ error: "Failed to list jobs" });
+    }
+  });
+
+  app.post("/api/jobs", async (request, response) => {
+    const youtubeUrl = request.body?.youtubeUrl;
+    const clipSelectionMode = request.body?.clipSelectionMode;
+    const requestedClipCount = request.body?.requestedClipCount;
+
+    if (
+      typeof youtubeUrl !== "string" ||
+      youtubeUrl.trim() === "" ||
+      !youtubeUrl.includes("youtube.com/watch?v=")
+    ) {
+      return response.status(400).json({
+        error:
+          "Valid youtubeUrl of the form youtube.com/watch?v=<video_id> is required",
+      });
+    }
+
+    if (clipSelectionMode !== "ai" && clipSelectionMode !== "sequential") {
+      return response.status(400).json({
+        error: "clipSelectionMode must be either 'ai' or 'sequential'",
+      });
+    }
+
+    const validatedRequestedClipCount = getValidatedRequestedClipCount({
+      clipSelectionMode,
+      requestedClipCount,
+    });
+
+    if (validatedRequestedClipCount instanceof Error) {
+      return response.status(400).json({
+        error: validatedRequestedClipCount.message,
+      });
+    }
+
+    try {
+      const createdJob = await jobService.createJob({
+        youtubeUrl: youtubeUrl.trim(),
         clipSelectionMode,
-        validatedRequestedClipCount,
-      ],
+        requestedClipCount: validatedRequestedClipCount,
+      });
+
+      return response.status(201).json(createdJob);
+    } catch (error) {
+      console.error("Failed to create job:", error);
+
+      return response.status(500).json({
+        error: "Failed to create job",
+      });
+    }
+  });
+
+  app.get("/api/jobs/:jobId", async (request, response) => {
+    const { jobId } = request.params;
+
+    try {
+      const job = await jobService.getJob(jobId);
+
+      if (job === null) {
+        return response.status(404).json({ error: "Job not found" });
+      }
+
+      return response.json(job);
+    } catch (error: unknown) {
+      console.error("Failed to get job:", error);
+
+      return response.status(500).json({ error: "Failed to get job" });
+    }
+  });
+
+  app.get("/api/jobs/:jobId/transcript", async (request, response) => {
+    const { jobId } = request.params;
+
+    try {
+      const transcript = await jobService.getJobTranscript(jobId);
+
+      if (transcript === null) {
+        return response.status(404).json({ error: "Job not found" });
+      }
+
+      return response.json(transcript);
+    } catch (error: unknown) {
+      console.error("Failed to get job transcript:", error);
+
+      return response
+        .status(500)
+        .json({ error: "Failed to get job transcript" });
+    }
+  });
+
+  app.get("/api/jobs/:jobId/clips", async (request, response) => {
+    const { jobId } = request.params;
+
+    try {
+      const job = await jobService.getJobStatus(jobId);
+
+      if (job === null) {
+        return response.status(404).json({ error: "Job not found" });
+      }
+
+      const clips = await clipService.listClipsForJob(jobId);
+
+      return response.json({
+        jobId: job.id,
+        status: job.status,
+        clips,
+      });
+    } catch (error: unknown) {
+      console.error("Failed to get job clips:", error);
+
+      return response.status(500).json({ error: "Failed to get job clips" });
+    }
+  });
+
+  app.get("/api/clips/:clipId/stream", async (request, response) => {
+    const clip = await getCompletedClipById(
+      clipService,
+      request.params.clipId,
+      response,
     );
 
-    const createdJob = result.rows[0];
-    console.log("Created job:", createdJob);
-    const workflowId = `clip-generation-${createdJob.id}`;
-    const temporalClient = await getTemporalClient();
+    if (clip === null) {
+      return;
+    }
 
-    await temporalClient.workflow.start(generateClipsWorkflow, {
-      workflowId,
-      taskQueue: CLIP_GENERATION_TASK_QUEUE,
-      args: [
-        {
-          jobId: createdJob.id,
-          youtubeUrl: createdJob.youtube_url,
-        },
-      ],
-    });
+    return response.sendFile(clip.absoluteFilePath);
+  });
 
-    await dbPool.query(
-      `
-        UPDATE jobs
-        SET workflow_id = $1, updated_at = NOW()
-        WHERE id = $2
-      `,
-      [workflowId, createdJob.id],
+  app.get("/api/jobs/:jobId/download", async (request, response) => {
+    const clips = await getCompletedClipsByJobId(
+      jobService,
+      clipService,
+      request.params.jobId,
+      response,
     );
 
-    return response.status(201).json({
-      id: createdJob.id,
-      workflowId,
-      youtubeUrl: createdJob.youtube_url,
-      clipSelectionMode: createdJob.clip_selection_mode as ClipSelectionMode,
-      requestedClipCount: createdJob.requested_clip_count,
-      status: createdJob.status,
-      createdAt: createdJob.created_at,
-    });
-  } catch (error) {
-    console.error("Failed to create job:", error);
+    if (clips === null) {
+      return;
+    }
 
-    return response.status(500).json({
-      error: "Failed to create job",
+    response.setHeader("Content-Type", "application/zip");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${createJobDownloadFileName(request.params.jobId)}"`,
+    );
+
+    const archive = new archiver.ZipArchive({ zlib: { level: 9 } });
+
+    archive.on("error", (error: Error) => {
+      console.error("Failed to create job download archive:", error);
+
+      if (!response.headersSent) {
+        response.status(500).json({ error: "Failed to create job download" });
+        return;
+      }
+
+      response.end();
     });
-  }
-});
+
+    archive.pipe(response);
+
+    clips.forEach((clip, index) => {
+      archive.append(createReadStream(clip.absoluteFilePath), {
+        name: `${String(index + 1).padStart(2, "0")}-${createDownloadFileName(clip.title)}.mp4`,
+      });
+    });
+
+    await archive.finalize();
+  });
+
+  return app;
+}
 
 function getValidatedRequestedClipCount(input: {
   clipSelectionMode: ClipSelectionMode;
@@ -178,189 +233,6 @@ function getValidatedRequestedClipCount(input: {
   return input.requestedClipCount;
 }
 
-app.get("/api/jobs/:jobId", async (request, response) => {
-  const { jobId } = request.params;
-
-  try {
-    const result = await dbPool.query(
-      `
-        SELECT
-          id,
-          workflow_id,
-          youtube_url,
-          clip_selection_mode,
-          requested_clip_count,
-          status,
-          error_message,
-          created_at,
-          updated_at
-        FROM jobs
-        WHERE id::text = $1
-      `,
-      [jobId],
-    );
-
-    if (result.rowCount === 0) {
-      return response.status(404).json({ error: "Job not found" });
-    }
-
-    const job = result.rows[0];
-
-    return response.json({
-      id: job.id,
-      workflowId: job.workflow_id,
-      youtubeUrl: job.youtube_url,
-      clipSelectionMode: job.clip_selection_mode,
-      requestedClipCount: job.requested_clip_count,
-      status: job.status,
-      errorMessage: job.error_message,
-      createdAt: job.created_at,
-      updatedAt: job.updated_at,
-    });
-  } catch (error: unknown) {
-    console.error("Failed to get job:", error);
-
-    return response.status(500).json({ error: "Failed to get job" });
-  }
-});
-
-app.get("/api/jobs/:jobId/transcript", async (request, response) => {
-  const { jobId } = request.params;
-
-  try {
-    const result = await dbPool.query(
-      `
-        SELECT id, status, transcript_source, transcript_text
-        FROM jobs
-        WHERE id::text = $1
-      `,
-      [jobId],
-    );
-
-    if (result.rowCount === 0) {
-      return response.status(404).json({ error: "Job not found" });
-    }
-
-    const job = result.rows[0];
-
-    return response.json({
-      jobId: job.id,
-      status: job.status,
-      transcriptSource: job.transcript_source,
-      transcriptText: job.transcript_text,
-    });
-  } catch (error: unknown) {
-    console.error("Failed to get job transcript:", error);
-
-    return response
-      .status(500)
-      .json({ error: "Failed to get job transcript" });
-  }
-});
-
-app.get("/api/jobs/:jobId/clips", async (request, response) => {
-  const { jobId } = request.params;
-
-  try {
-    const jobResult = await dbPool.query(
-      `
-        SELECT id, status
-        FROM jobs
-        WHERE id::text = $1
-      `,
-      [jobId],
-    );
-
-    if (jobResult.rowCount === 0) {
-      return response.status(404).json({ error: "Job not found" });
-    }
-
-    const clipsResult = await dbPool.query(
-      `
-        SELECT
-          id,
-          title,
-          start_time_seconds,
-          end_time_seconds,
-          reason,
-          status,
-          file_path
-        FROM clips
-        WHERE job_id = $1
-        ORDER BY start_time_seconds
-      `,
-      [jobId],
-    );
-
-    const job = jobResult.rows[0];
-
-    return response.json({
-      jobId: job.id,
-      status: job.status,
-      clips: clipsResult.rows.map((clip) => ({
-        id: clip.id,
-        title: clip.title,
-        startTimeSeconds: clip.start_time_seconds,
-        endTimeSeconds: clip.end_time_seconds,
-        reason: clip.reason,
-        status: clip.status,
-        filePath: clip.file_path,
-      })),
-    });
-  } catch (error: unknown) {
-    console.error("Failed to get job clips:", error);
-
-    return response.status(500).json({ error: "Failed to get job clips" });
-  }
-});
-
-app.get("/api/clips/:clipId/stream", async (request, response) => {
-  const clip = await getCompletedClipById(request.params.clipId, response);
-
-  if (clip === null) {
-    return;
-  }
-
-  return response.sendFile(clip.absoluteFilePath);
-});
-
-app.get("/api/jobs/:jobId/download", async (request, response) => {
-  const clips = await getCompletedClipsByJobId(request.params.jobId, response);
-
-  if (clips === null) {
-    return;
-  }
-
-  response.setHeader("Content-Type", "application/zip");
-  response.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${createJobDownloadFileName(request.params.jobId)}"`,
-  );
-
-  const archive = new archiver.ZipArchive({ zlib: { level: 9 } });
-
-  archive.on("error", (error: Error) => {
-    console.error("Failed to create job download archive:", error);
-
-    if (!response.headersSent) {
-      response.status(500).json({ error: "Failed to create job download" });
-      return;
-    }
-
-    response.end();
-  });
-
-  archive.pipe(response);
-
-  clips.forEach((clip, index) => {
-    archive.append(createReadStream(clip.absoluteFilePath), {
-      name: `${String(index + 1).padStart(2, "0")}-${createDownloadFileName(clip.title)}.mp4`,
-    });
-  });
-
-  await archive.finalize();
-});
-
 function createDownloadFileName(title: unknown): string {
   if (typeof title !== "string") {
     return "clip";
@@ -384,29 +256,17 @@ function createJobDownloadFileName(jobId: string): string {
 }
 
 async function getCompletedClipById(
+  clipService: ClipsService,
   clipId: string,
   response: express.Response,
 ): Promise<{ absoluteFilePath: string; title: string } | null> {
   try {
-    const result = await dbPool.query(
-      `
-        SELECT
-          id,
-          title,
-          status,
-          file_path
-        FROM clips
-        WHERE id::text = $1
-      `,
-      [clipId],
-    );
+    const clip = await clipService.getClipFileRecord(clipId);
 
-    if (result.rowCount === 0) {
+    if (clip === null) {
       response.status(404).json({ error: "Clip not found" });
       return null;
     }
-
-    const clip = result.rows[0];
 
     if (clip.status !== "completed") {
       response.status(409).json({
@@ -415,14 +275,14 @@ async function getCompletedClipById(
       return null;
     }
 
-    if (typeof clip.file_path !== "string" || clip.file_path.trim() === "") {
+    if (typeof clip.filePath !== "string" || clip.filePath.trim() === "") {
       response.status(404).json({
         error: "Clip file path was not found",
       });
       return null;
     }
 
-    const absoluteFilePath = path.resolve(clip.file_path);
+    const absoluteFilePath = path.resolve(clip.filePath);
 
     try {
       await access(absoluteFilePath);
@@ -445,40 +305,22 @@ async function getCompletedClipById(
 }
 
 async function getCompletedClipsByJobId(
+  jobService: JobsService,
+  clipService: ClipsService,
   jobId: string,
   response: express.Response,
 ): Promise<Array<{ absoluteFilePath: string; title: string }> | null> {
   try {
-    const jobResult = await dbPool.query(
-      `
-        SELECT id, status
-        FROM jobs
-        WHERE id::text = $1
-      `,
-      [jobId],
-    );
+    const job = await jobService.getJobStatus(jobId);
 
-    if (jobResult.rowCount === 0) {
+    if (job === null) {
       response.status(404).json({ error: "Job not found" });
       return null;
     }
 
-    const clipsResult = await dbPool.query(
-      `
-        SELECT
-          id,
-          title,
-          status,
-          file_path
-        FROM clips
-        WHERE job_id = $1
-          AND status = 'completed'
-        ORDER BY start_time_seconds
-      `,
-      [jobId],
-    );
+    const clips = await clipService.listCompletedClipFileRecords(jobId);
 
-    if (clipsResult.rowCount === 0) {
+    if (clips.length === 0) {
       response.status(409).json({
         error: "No completed clips are ready to download yet",
       });
@@ -488,15 +330,15 @@ async function getCompletedClipsByJobId(
     const completedClips: Array<{ absoluteFilePath: string; title: string }> =
       [];
 
-    for (const clip of clipsResult.rows) {
-      if (typeof clip.file_path !== "string" || clip.file_path.trim() === "") {
+    for (const clip of clips) {
+      if (typeof clip.filePath !== "string" || clip.filePath.trim() === "") {
         response.status(404).json({
           error: `Clip file path was not found for clip ${clip.id}`,
         });
         return null;
       }
 
-      const absoluteFilePath = path.resolve(clip.file_path);
+      const absoluteFilePath = path.resolve(clip.filePath);
 
       try {
         await access(absoluteFilePath);
